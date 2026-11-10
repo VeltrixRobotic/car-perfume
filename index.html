@@ -181,16 +181,15 @@
       document.body.appendChild(script);
     });
   }
-  const PBKDF2_ITERATIONS = 120000;
   function bytesToBase64Url(bytes) {
     let binary = "";
     bytes.forEach(b => binary += String.fromCharCode(b));
     return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
   }
-  async function derivePasswordKey(password, saltHex) {
+  async function derivePasswordKey(password, saltHex, iterations) {
     const salt = new Uint8Array((saltHex.match(/.{1,2}/g)||[]).map(x=>parseInt(x,16)));
     const material = await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);
-    return new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:PBKDF2_ITERATIONS,hash:"SHA-256"},material,256));
+    return new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:Number(iterations)||10000,hash:"SHA-256"},material,256));
   }
   async function makeProof(verifier, nonce) {
     const key = await crypto.subtle.importKey("raw",verifier,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
@@ -207,7 +206,7 @@
   async function adminLogin(password) {
     const challenge = await jsonp({action:"challenge"});
     if (!challenge.salt || !challenge.nonce) throw new Error("Admin password has not been configured. Set it up in the Admin sheet first.");
-    const verifier = await derivePasswordKey(password,challenge.salt);
+    const verifier = await derivePasswordKey(password,challenge.salt,challenge.iterations);
     const proof = await makeProof(verifier,challenge.nonce);
     const result = await jsonp({action:"login",nonce:challenge.nonce,proof});
     adminToken = result.token;
