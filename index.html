@@ -186,9 +186,9 @@
       </section>
 
       <section class="panel">
-        <div class="panel-head"><div><h2>Sales history</h2><div class="hint">Latest transactions from Google Sheets</div></div><div class="toolbar"><input id="searchInput" placeholder="Search perfume..." /><input id="dateFilter" type="date" aria-label="Filter by date" /></div></div>
+        <div class="panel-head"><div><h2>Sales history</h2><div class="hint">Latest transactions</div></div><div class="toolbar"><input id="searchInput" placeholder="Search perfume..." /><input id="dateFilter" type="date" aria-label="Filter by date" /></div></div>
         <div class="table-wrap">
-          <table><thead><tr><th>Date & time</th><th>Perfume</th><th>Qty</th><th>Unit price</th><th>Total</th><th>Action</th></tr></thead><tbody id="salesBody"><tr><td colspan="6" class="empty">Connect Google Sheets to load sales.</td></tr></tbody></table>
+          <table><thead><tr><th>Date & time</th><th>Perfume</th><th>Qty</th><th>Unit price</th><th>Total</th><th>Action</th></tr></thead><tbody id="salesBody"><tr><td colspan="6" class="empty">Connect Database to load sales.</td></tr></tbody></table>
         </div>
         <div class="hint" id="recordCount" style="margin-top:12px">0 records</div>
       </section>
@@ -209,7 +209,7 @@
       <section class="panel"><div class="panel-head"><div><h2>Top-selling perfumes</h2><div class="hint">Ranked by bottles sold</div></div></div><div id="topPerfumes"><div class="empty">No sales data yet.</div></div></section>
       <section class="panel"><div class="panel-head"><div><h2>Sales summary</h2><div class="hint">Current month performance</div></div></div><div class="row"><div><div class="hint">This month revenue</div><div class="metric-value" style="font-size:22px" id="monthRevenue">RM 0.00</div></div><div><div class="hint">This month bottles</div><div class="metric-value" style="font-size:22px" id="monthBottles">0</div></div></div><div class="hint" style="margin-top:20px">Monthly figures are based on the transaction date stored in the sheet.</div></section>
     </div>
-    <footer>Car Perfume Sales Dashboard · Data stored in your Google Sheet</footer>
+    <footer>Car Perfume Sales Dashboard · 3DLAB</footer>
   </div>
   <div id="loginModal" class="modal-backdrop" style="display:none">
     <section class="panel login-modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
@@ -303,7 +303,7 @@
     try {
       const result=await jsonp({action:"list"});
       sales=Array.isArray(result.data)?result.data:[];
-      render(); setStatus("Google Sheets connected","ok");
+      render(); setStatus("Online","ok");
     } catch(err) {setStatus("Connection error","bad");toast(err.message,"error");}
   }
   function render() {
@@ -384,7 +384,7 @@
       if (!adminToken || Date.now() >= adminExpiry) throw new Error("Admin login required. Please sign in again.");
       const params=editingId?{action:"update",id:editingId,perfume,quantity,price,token:adminToken}:{action:"add",perfume,quantity,price,token:adminToken};
       await jsonp(params);
-      toast(editingId?"Sale updated successfully.":"Sale saved to Google Sheets.");
+      toast(editingId?"Sale updated successfully.":"Sale saved.");
       resetForm(); await loadSales();
     } catch(err){toast(err.message,"error");}
     finally{btn.disabled=false;btn.textContent=editingId?"Update sale":"＋ Save sale";}
