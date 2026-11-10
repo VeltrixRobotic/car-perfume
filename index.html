@@ -59,6 +59,9 @@
     .legend-copy{min-width:0;display:flex;flex-direction:column}
     .legend-name{font-size:12px;color:#dce6f6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .legend-value{font-size:11px;color:var(--muted)}
+    .modal-backdrop{position:fixed;inset:0;background:#020617c9;backdrop-filter:blur(7px);display:grid;place-items:center;padding:18px;z-index:20}
+    .login-modal{width:min(420px,100%);box-shadow:0 24px 80px #0009}
+    .login-modal .btn-primary{margin-top:18px}
     footer{color:#63748f;font-size:11px;text-align:center;padding:22px}
     @media(max-width:1050px){.main{grid-template-columns:320px 1fr}.grid{grid-template-columns:repeat(2,1fr)}}
     @media(max-width:760px){.pie-layout{grid-template-columns:1fr;gap:12px}.pie-wrap{max-width:250px}.pie-legend{grid-template-columns:1fr 1fr}.wrap{padding:17px}.main{grid-template-columns:1fr}.lower{grid-template-columns:1fr}header{align-items:flex-start;flex-direction:column}.status{align-self:flex-start}.panel{padding:16px}.toolbar{width:100%}.toolbar input{flex:1;min-width:130px}.toolbar select{flex:1}}
@@ -72,7 +75,7 @@
         <div class="logo">✦</div>
         <div><h1>Car Perfume Sales</h1><div class="subtitle">Sales overview · Inventory movement · Transaction history</div></div>
       </div>
-      <div class="status"><span class="dot" id="statusDot"></span><span id="connectionStatus">Not connected</span><button class="btn btn-ghost" id="refreshBtn">↻ Refresh</button></div>
+      <div class="status"><span class="dot" id="statusDot"></span><span id="connectionStatus">Not connected</span><button class="btn btn-ghost" id="adminBtn">♙ Admin login</button><button class="btn btn-ghost" id="refreshBtn">↻ Refresh</button></div>
     </header>
 
     <div class="notice" id="configNotice">Setup required: paste your deployed Google Apps Script Web App URL into <b>API_URL</b> in this file, then publish the GitHub Pages site.</div>
@@ -128,6 +131,17 @@
     </div>
     <footer>Car Perfume Sales Dashboard · Data stored in your Google Sheet</footer>
   </div>
+  <div id="loginModal" class="modal-backdrop" style="display:none">
+    <section class="panel login-modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+      <div class="panel-head"><div><h2 id="loginTitle">Admin login</h2><div class="hint">Sign in to add, edit or delete sales.</div></div><button class="action" id="closeLoginBtn" type="button">✕</button></div>
+      <form id="loginForm">
+        <label for="adminPassword">Admin password</label>
+        <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Enter admin password" required />
+        <button class="btn btn-primary" id="loginSubmitBtn" type="submit">Login</button>
+      </form>
+      <div class="hint" style="margin-top:12px">Public visitors can continue viewing sales without signing in.</div>
+    </section>
+  </div>
   <div class="toast" id="toast"></div>
 
 <script>
@@ -136,6 +150,8 @@
 
   let sales = [];
   let editingId = null;
+  let adminToken = null;
+  let adminExpiry = 0;
   const $ = id => document.getElementById(id);
   const money = n => "RM " + Number(n || 0).toLocaleString("en-MY",{minimumFractionDigits:2,maximumFractionDigits:2});
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -165,6 +181,40 @@
       document.body.appendChild(script);
     });
   }
+  const PBKDF2_ITERATIONS = 120000;
+  function bytesToBase64Url(bytes) {
+    let binary = "";
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  }
+  async function derivePasswordKey(password, saltHex) {
+    const salt = new Uint8Array((saltHex.match(/.{1,2}/g)||[]).map(x=>parseInt(x,16)));
+    const material = await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);
+    return new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:PBKDF2_ITERATIONS,hash:"SHA-256"},material,256));
+  }
+  async function makeProof(verifier, nonce) {
+    const key = await crypto.subtle.importKey("raw",verifier,{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+    return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(nonce))));
+  }
+  function updateAdminUI() {
+    const isAdmin = !!adminToken && Date.now() < adminExpiry;
+    if (!isAdmin) { adminToken=null; adminExpiry=0; }
+    $("adminBtn").textContent = isAdmin ? "♙ Admin logout" : "♙ Admin login";
+    $("saveBtn").disabled = !isAdmin;
+    $("saveBtn").title = isAdmin ? "" : "Admin login required";
+    render();
+  }
+  async function adminLogin(password) {
+    const challenge = await jsonp({action:"challenge"});
+    if (!challenge.salt || !challenge.nonce) throw new Error("Admin password has not been configured. Set it up in the Admin sheet first.");
+    const verifier = await derivePasswordKey(password,challenge.salt);
+    const proof = await makeProof(verifier,challenge.nonce);
+    const result = await jsonp({action:"login",nonce:challenge.nonce,proof});
+    adminToken = result.token;
+    adminExpiry = Date.now() + Number(result.expiresIn || 21600)*1000;
+    updateAdminUI();
+  }
+
   async function loadSales() {
     if(!API_URL.startsWith("https://script.google.com/macros/s/")) {
       $("configNotice").style.display="block"; setStatus("Setup required","bad");
@@ -197,7 +247,7 @@
     $("salesBody").innerHTML=filtered.length?filtered.map(x=>`<tr>
       <td>${esc(localDateTime(x.timestamp))}</td><td><b>${esc(x.perfume)}</b></td><td>${Number(x.quantity)}</td>
       <td>${money(x.price)}</td><td><b>${money(x.total)}</b></td>
-      <td><div class="actions"><button class="action" onclick="startEdit('${esc(x.id)}')">Edit</button><button class="action delete" onclick="deleteSale('${esc(x.id)}')">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="6" class="empty">No matching sales found.</td></tr>`;
+      <td>${adminToken && Date.now()<adminExpiry ? `<div class="actions"><button class="action" onclick="startEdit('${esc(x.id)}')">Edit</button><button class="action delete" onclick="deleteSale('${esc(x.id)}')">Delete</button></div>` : '<span class="muted">—</span>'}</td></tr>`).join(""):`<tr><td colspan="6" class="empty">No matching sales found.</td></tr>`;
     const tally={}; sales.forEach(x=>{tally[x.perfume]=(tally[x.perfume]||0)+Number(x.quantity||0);});
     const ranked=Object.entries(tally).sort((a,b)=>b[1]-a[1]).slice(0,5), max=ranked[0]?.[1]||1;
     $("topPerfumes").innerHTML=ranked.length?ranked.map(([name,n])=>`<div class="bar-row"><span title="${esc(name)}">${esc(name.length>16?name.slice(0,15)+"…":name)}</span><div class="bar-track"><div class="bar-fill" style="width:${n/max*100}%"></div></div><b>${n} bottles</b></div>`).join(""):`<div class="empty">No sales data yet.</div>`;
@@ -252,7 +302,8 @@
     if(!perfume||!Number.isInteger(quantity)||quantity<1||!Number.isFinite(price)||price<=0){toast("Enter a perfume name, whole-number quantity and valid unit price.","error");return;}
     const btn=$("saveBtn");btn.disabled=true;btn.textContent="Saving…";
     try {
-      const params=editingId?{action:"update",id:editingId,perfume,quantity,price}:{action:"add",perfume,quantity,price};
+      if (!adminToken || Date.now() >= adminExpiry) throw new Error("Admin login required. Please sign in again.");
+      const params=editingId?{action:"update",id:editingId,perfume,quantity,price,token:adminToken}:{action:"add",perfume,quantity,price,token:adminToken};
       await jsonp(params);
       toast(editingId?"Sale updated successfully.":"Sale saved to Google Sheets.");
       resetForm(); await loadSales();
@@ -268,13 +319,34 @@
   window.deleteSale=async id=>{
     const x=sales.find(s=>s.id===id);if(!x)return;
     if(!confirm(`Delete this sale: ${x.perfume}, quantity ${x.quantity}, ${money(x.total)}?`))return;
-    try{await jsonp({action:"delete",id});toast("Sale deleted.");await loadSales();if(editingId===id)resetForm();}
+    try{if (!adminToken || Date.now() >= adminExpiry) throw new Error("Admin login required.");
+    await jsonp({action:"delete",id,token:adminToken});toast("Sale deleted.");await loadSales();if(editingId===id)resetForm();}
     catch(err){toast(err.message,"error");}
   };
   function resetForm(){editingId=null;$("saleForm").reset();$("quantity").value=1;$("calculatedTotal").textContent="RM 0.00";$("formTitle").textContent="Add a sale";$("saveBtn").textContent="＋ Save sale";$("cancelEditBtn").style.display="none";}
   $("cancelEditBtn").addEventListener("click",resetForm);
+  $("adminBtn").addEventListener("click",()=>{
+    if (adminToken && Date.now()<adminExpiry) {
+      adminToken=null;adminExpiry=0;resetForm();updateAdminUI();toast("Admin logged out.");
+    } else {
+      $("loginModal").style.display="grid";$("adminPassword").focus();
+    }
+  });
+  $("closeLoginBtn").addEventListener("click",()=>{$("loginModal").style.display="none";$("loginForm").reset();});
+  $("loginModal").addEventListener("click",e=>{if(e.target===$("loginModal"))$("closeLoginBtn").click();});
+  $("loginForm").addEventListener("submit",async e=>{
+    e.preventDefault();
+    const btn=$("loginSubmitBtn");btn.disabled=true;btn.textContent="Checking…";
+    try {
+      await adminLogin($("adminPassword").value);
+      $("loginModal").style.display="none";$("loginForm").reset();
+      toast("Admin login successful.");
+    } catch(err) {toast(err.message,"error");}
+    finally {btn.disabled=false;btn.textContent="Login";}
+  });
   $("refreshBtn").addEventListener("click",loadSales);
   $("searchInput").addEventListener("input",render); $("dateFilter").addEventListener("change",render);
+  updateAdminUI();
   loadSales();
 </script>
 </body>
